@@ -98,8 +98,7 @@
       var endLocation = null;
 
       var directionsService;
-      var map = null;;
-      var markerLabels = "123456789CDEFGHIJKLMNOPQRSTUVWXYZ";
+      var map = null;
       var infoWindow = null;
 
       function initMap() {
@@ -380,7 +379,6 @@
           var feature = features[i];
           if(feature.type.toLowerCase() == "feature") {
             var properties = feature.properties;
-            var letter = markerLabels[i % markerLabels.length];
             var itemHtml  = `<a href="#" class="list-group-item list-group-item-action" onclick="showFeature(${properties.id})">`;
                 itemHtml += `<span class="mb-1 mt-1 h3 text-primary">${properties.condition}<span class="pull-right small align-bottom">${properties.subcondition}</span></span>`;
                 itemHtml += `<p>${properties.details}</p>`;
@@ -394,7 +392,7 @@
       }
     </script>
     
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places&callback=initMap"
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_KEY&libraries=places&callback=initMap"
     async defer></script>
     
     <!-- Latest compiled and minified CSS -->
