@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple Map</title>
+    <meta name="viewport" content="initial-scale=1.0">
+    <meta charset="utf-8">
+    <style>
+      /* Always set the map height explicitly to define the size of the div
+       * element that contains the map. */
+      #map {
+        height: 800px;
+        /*width: 768px;*/
+      }
+      /* Optional: Makes the sample page fill the window. */
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      
+      .pac-card {
+        margin: 10px 10px 0 0;
+        border-radius: 2px 0 0 2px;
+        box-sizing: border-box;
+        -moz-box-sizing: border-box;
+        outline: none;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        background-color: #fff;
+        font-family: Roboto;
+      }
+
+      #pac-container {
+        padding-top: 12px;
+        padding-bottom: 12px;
+      }
+
+      .pac-controls {
+        display: inline-block;
+        padding: 5px 11px;
+      }
+
+      .pac-controls label {
+        font-family: Roboto;
+        font-size: 13px;
+        font-weight: 300;
+      }
+
+      #pac-input-start #pac-input-end {
+        background-color: #fff;
+        font-family: Roboto;
+        font-size: 15px;
+        font-weight: 300;
+        margin-left: 12px;
+        padding: 0 11px 0 13px;
+        text-overflow: ellipsis;
+        width: 100%;
+      }
+
+      #pac-input:focus {
+        border-color: #4d90fe;
+      }
+
+      #summary {
+        margin-top: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container-fluid">
+      <div class="row-fluid">
+        <div class="col-md-8">
+            <div id="map"></div>
+        </div>
+        <div class="col-md-4">
+          <div class="row" id="routing">
+            <div id="pac-container">
+                <input id="pac-input-start" class="form-control" type="text"
+                    placeholder="Enter a start location" />
+            </div>
+            <div id="pac-container">
+                <input id="pac-input-end" class="form-control" type="text"
+                    placeholder="Enter an end location" />
+            </div>
+            <div id="route-button-container">
+              <button name="route-button" id="route-button" class="pull-right">Route</button>
+            </div>
+          </div>
+          <div class="row" id="summary"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      var mogolApiKey = "YOUR-MOGOL-KEY";
+      var mogolApiUrl = "https://api.mogolinc.com/conditions";
+
+      var startLocation = null;
+      var endLocation = null;
+
+      var directionsService;
+      var map = null;;
+      var markerLabels = "123456789CDEFGHIJKLMNOPQRSTUVWXYZ";
+      var infoWindow = null;
+
+      function initMap() {
+        directionsService = new google.maps.DirectionsService();
+        map = new google.maps.Map(document.getElementById('map'), {
+          center: {lat: 40.760258, lng: -73.974707},
+          zoom: 14
+        });
+
+        // Update once map is idle aftermovement
+        map.addListener('idle', function() {
+          // Refresh road data
+          reloadRegion(map.getBounds());
+        });
+
+
+        var inputStart = document.getElementById('pac-input-start');
+        var inputEnd = document.getElementById('pac-input-end');
+      
+        var autocompleteStart = new google.maps.places.Autocomplete(inputStart);
+        var autocompleteEnd = new google.maps.places.Autocomplete(inputEnd);
+
+
+        autocompleteStart.addListener('place_changed', function() {
+          var place = autocompleteStart.getPlace();
+          if (!place.geometry) {
+            // User entered the name of a Place that was not suggested and
+            // pressed the Enter key, or the Place Details request failed.
+            window.alert("No details available for input: '" + place.name + "'");
+            return;
+          }
+          startLocation = place.geometry.location;
+        });
+
+        autocompleteEnd.addListener('place_changed', function() {
+          var place = autocompleteEnd.getPlace();
+          if (!place.geometry) {
+            // User entered the name of a Place that was not suggested and
+            // pressed the Enter key, or the Place Details request failed.
+            window.alert("No details available for input: '" + place.name + "'");
+            return;
+          }
+          endLocation = place.geometry.location;
+        });
+
+        
+        // Bind the map's bounds (viewport) property to the autocomplete object,
+        // so that the autocomplete requests use the current map bounds for the
+        // bounds option in the request.
+        autocompleteStart.bindTo('bounds', map);
+        autocompleteEnd.bindTo('bounds', map);
+        autocompleteStart.setOptions({strictBounds:true});
+        autocompleteEnd.setOptions({strictBounds:true});
+      }
+
+      var directionsDisplay = null;
+      var routeButton = document.getElementById('route-button');
+      routeButton.onclick = function() {
+        // Get route if start and end location exist.
+        if(startLocation != null && endLocation != null) {
+          if(directionsDisplay != null) {
+            directionsDisplay.setMap(null);
+            directionsDisplay = null;
+          }
+
+          
+          directionsDisplay = new google.maps.DirectionsRenderer();
+          var request = {
+            origin: startLocation,
+            destination: endLocation,
+            travelMode: 'DRIVING'
+          };
+          directionsService.route(request, function(result, status) {
+            if (status == 'OK') {
+              directionsDisplay.setDirections(result);
+              directionsDisplay.setMap(map);
+              reloadRoute(result.routes[0]);
+            }
+          });
+        } else {
+          window.alert("Please specify a start and end location");
+        }
+      }
+
+      var conditionColorMap = {
+        "construction": "orange",
+        "closed": "red",
+        "information": "blue",
+        "restriction": "black",
+        "winter-condition": "grey",
+        "pavement-condition": "grey",
+        "special-event": "purple",
+        "planned-event": "purple",
+        "delay": "red",
+        "incident": "red"
+      };
+
+      var roadFeatures = {};
+
+      function httpGet(url, apiKey) {
+        return new Promise(function(resolve, reject) {
+          var xmlHttp = new XMLHttpRequest();
+          xmlHttp.onreadystatechange = function() {
+            if(xmlHttp.readyState == 4 && xmlHttp.status == 200) {
+              // success
+              resolve(JSON.parse(xmlHttp.responseText));
+            } else if(xmlHttp.readyState == 4) {
+              // failure
+              reject(Error(JSON.parse(xmlHttp.responseText)));
+            }
+          }
+          xmlHttp.open("GET", url);
+          xmlHttp.setRequestHeader("x-api-key", apiKey);
+          xmlHttp.send();
+        });
+      }
+
+      function reloadRegion(bounds) {
+        var url = `${mogolApiUrl}/region/${bounds.getNorthEast().lat()},${bounds.getNorthEast().lng()}/${bounds.getSouthWest().lat()},${bounds.getSouthWest().lng()}/?f=coordinates`;
+
+        return httpGet(url, mogolApiKey)
+        .then((result) => {
+          var features = result.features;
+
+          // Track existing features not updated as part of this
+          // request to be removed.
+          var featuresNotUpdated = Object.keys(roadFeatures);
+
+          for(var i = 0; i < features.length; i++) {
+            var feature = features[i];
+
+            var fnuIdx = featuresNotUpdated.indexOf(`${feature.properties.id}`);
+            if(fnuIdx >= 0) {
+              // Update any properties that have changed.
+              // Note you should also check if the geometry has been modified.
+              roadFeatures[feature.properties.id].properties = feature.properties;
+
+              // Remove from featuresNotUpdated list.
+              featuresNotUpdated.splice(fnuIdx, 1);
+            } else {
+              // Add new feature
+              var overlay = null;
+              if(feature.geometry.type == "Point") {
+                overlay = new google.maps.Marker({
+                  position: new google.maps.LatLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0]),
+                  icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: conditionColorMap[feature.properties.condition],
+                    fillOpacity: 1.0,
+                    strokeWeight: 0
+                  },
+                  opacity: 0.7,
+                  map: map
+                });
+              } else if(feature.geometry.type == "LineString") {
+                var path = [];
+                for(var a = 0; a < feature.geometry.coordinates.length; a++) {
+                  path.push(new google.maps.LatLng(feature.geometry.coordinates[a][1], feature.geometry.coordinates[a][0]));
+                }
+                overlay = new google.maps.Polyline({
+                  path: path,
+                  geodesic: true,
+                  strokeColor: conditionColorMap[feature.properties.condition],
+                  opacity: 0.7,
+                  map: map
+                });
+              } else if(feature.geometry.type == "Polygon") {
+                var path = [];
+                for(var a = 0; a < feature.geometry.coordinates.length; a++) {
+                  path.push(new google.maps.LatLng(feature.geometry.coordinates[a][1], feature.geometry.coordinates[a][0]));
+                }
+                overlay = new google.maps.Polygon({
+                  path: path,
+                  strokeColor: conditionColorMap[feature.properties.condition],
+                  fillColor: conditionColorMap[feature.properties.condition],
+                  opacity: 0.7,
+                  map: map
+                });
+              } else {
+                console.error("Unhandled geometry type: " + feature.geometry.type);
+              }
+              attachShowWindow(overlay, feature.properties.id);
+
+              feature.overlay = overlay;
+
+              roadFeatures[feature.properties.id] = feature;
+            }
+          }
+
+          for(var i = 0; i < featuresNotUpdated.length; i++) {
+            // Remove feature
+            var id = featuresNotUpdated[i];
+
+            if(routeFeatures == null || !routeFeatures.hasOwnProperty(parseInt(id))) {
+              if(roadFeatures[id].overlay != null) {
+                roadFeatures[id].overlay.setMap(null);
+              }
+
+              delete roadFeatures[id];
+            }
+          }
+        }).catch((err) => {
+          console.error(err);
+        });
+      }
+
+      var routeFeatures = {};
+      function reloadRoute(route) {
+        var url = `${mogolApiUrl}/route/?path=${encodeURIComponent(route.overview_polyline)}&f=coordinates`;
+
+        return httpGet(url, mogolApiKey)
+        .then((result) => {
+          var features = result.features;
+          routeFeatures = {};
+          for(var i = 0; i < features.length; i++) {
+            if(features[i].type.toLowerCase() == "feature") {
+              routeFeatures[features[i].properties.id] = features[i];
+            }
+          }
+          // Replace the existing summary list.
+          updateRouteSummary(features);
+        }).catch((err) => {
+          console.error(err);
+        });
+      }
+
+      function attachShowWindow(overlay, id) {
+        overlay.addListener('click', function() {
+          showInfoWindow(id);
+        })
+      }
+
+      function showFeature(id) {
+        // Find the marker, polyline or polygon
+        var overlay = roadFeatures[id].overlay;
+
+        // Center to the overlay, and pop up the info window.
+        if(roadFeatures[id].geometry.type.toLowerCase() != "point") {
+          var points = overlay.getPath().getArray();
+          var bounds = new google.maps.LatLngBounds();
+          for(var i = 0; i < points.length; i++) {
+            bounds.extend(points[i]);
+          }
+          map.fitBounds(bounds);
+        } else {
+          map.panTo(overlay.getPosition());
+        }
+        
+        showInfoWindow(id);
+      }
+
+      function showInfoWindow(id) {
+        var properties = roadFeatures[id].properties;
+        var overlay = roadFeatures[id].overlay;
+
+        var html = `<div class="d-flex justify-content-between"><h3 class="mb-1 text-primary">${properties.condition}<small class="pull-right">${properties.subcondition}</small></h3></div>`;
+        html += `<p>${properties.details}</p>`;
+
+        if(infoWindow != null && infoWindow.getMap() != null && infoWindow.getMap() !== undefined) {
+          infoWindow.close();
+        }
+        infoWindow = new google.maps.InfoWindow({
+          content: html
+        });
+
+        if(roadFeatures[id].geometry.type.toLowerCase() != "point") {
+          // Use end point.
+          infoWindow.setPosition(new google.maps.LatLng(roadFeatures[id].geometry.coordinates[0][1], roadFeatures[id].geometry.coordinates[0][0]));
+        }
+
+        infoWindow.open(map, overlay);
+      }
+
+      function updateRouteSummary(features) {
+        var summaryHtml = "<div class=\"list-group\">";
+        for(var i = 0; i < features.length; i++) {
+          var feature = features[i];
+          if(feature.type.toLowerCase() == "feature") {
+            var properties = feature.properties;
+            var letter = markerLabels[i % markerLabels.length];
+            var itemHtml  = `<a href="#" class="list-group-item list-group-item-action" onclick="showFeature(${properties.id})">`;
+                itemHtml += `<span class="mb-1 mt-1 h3 text-primary">${properties.condition}<span class="pull-right small align-bottom">${properties.subcondition}</span></span>`;
+                itemHtml += `<p>${properties.details}</p>`;
+                itemHtml += `</a>`;
+                
+            summaryHtml += itemHtml;
+          }
+        }
+        summaryHtml += "</div>";
+        document.getElementById("summary").innerHTML = summaryHtml;
+      }
+    </script>
+    
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places&callback=initMap"
+    async defer></script>
+    
+    <!-- Latest compiled and minified CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+
+    <!-- jQuery library -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+
+    <!-- Latest compiled JavaScript -->
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+  </body>
+</html>
